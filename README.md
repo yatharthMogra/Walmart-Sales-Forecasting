@@ -1,112 +1,141 @@
 # Walmart Store Sales Forecasting
 
-Walmart began recruiting competition for store sales forecasting on [Kaggle](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/overview). In my module 4 project, I worked on this competition.
+This project builds end‑to‑end models to forecast weekly sales for Walmart stores and departments using historical sales, holiday information, and promotional features from the Kaggle “Walmart Recruiting – Store Sales Forecasting” competition. The focus is on handling seasonality and holiday effects and comparing tree‑based regression with classical time‑series models on a realistic retail dataset.
 
-**Problem:**
+---
 
-There are many seasons that sales are significantly higher or lower than averages. If the company does not know about these seasons, it can lose too much money. Predicting future sales is one of the most crucial plans for a company. Sales forecasting gives an idea to the company for arranging stocks, calculating revenue, and deciding to make a new investment. Another advantage of knowing future sales is that achieving predetermined targets from the beginning of the seasons can have a positive effect on stock prices and investors' perceptions. Also, not reaching the projected target could significantly damage stock prices, conversely. And, it will be a big problem especially for Walmart as a big company.
+## Data and Preprocessing
 
-**Aim:**
+**Source data**
 
-My aim in this project is to build a model which predicts sales of the stores. With this model, Walmart authorities can decide their future plans which is very important for arranging stocks, calculating revenue and deciding to make new investment or not.
+- `train.csv`, `features.csv`, and `stores.csv` from [Kaggle](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/overview).
+- Weekly sales for 45 stores and 82 departments across multiple regions.
 
-**Solution:**
+**Cleaning and feature engineering** (in `STEP1_Cleaning_and_EDA.ipynb`):
 
-With the accurate prediction company can;
+- Merge `train`, `features`, and `stores` into a single dataframe.
+- Drop duplicate holiday column (`IsHoliday_y`) and rename `IsHoliday_x` to `IsHoliday`.
+- Remove rows with non‑positive `Weekly_Sales` (421,570 → 420,212 rows) to avoid degenerate targets.
+- Create holiday indicator columns (`Super_Bowl`, `Labor_Day`, `Thanksgiving`, `Christmas`) using explicit date rules.
+- Fill `MarkDown1`–`MarkDown5` nulls with `0`.
+- Convert `Date` to `datetime` and derive `week`, `month`, and `year`.
+- Save the processed dataset to `clean_data.csv` for downstream modeling.
 
-- Determine seasonal demands and take action for this
-- Protect from money loss because achieving sales targets can have a positive effect on stock prices and investors' perceptions
-- Forecast revenue easily and accurately
-- Manage inventories
-- Do more effective campaigns
+The notebook also includes exploratory plots and descriptive statistics (monthly/yearly averages, top weeks, store/department comparisons) to understand seasonality and holiday effects.
 
-**Data:**
+---
 
-The data is obtained from [Kaggle competition](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/data). There are mainly weekly sales for 45 stores and 82 departments of Walmart in different areas. Detailed more data features and merged external data can be found in [STEP1_Cleaning_and_EDA notebook](https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/STEP1_Cleaning_and_EDA.ipynb) in this repo.
+## Random Forest Regression
 
-**Plan:**
+Notebook: `STEP2_Random_Forest_Regressor.ipynb`
 
-1. Understanding, Cleaning and Exploring Data
+**Setup**
 
-2. Preparing Data to Modeling
+- Load `clean_data.csv`.
+- Encode:
+  - `Type` as numeric (A/B/C → 1/2/3).
+  - Boolean fields (`IsHoliday`, `Super_Bowl`, `Labor_Day`, `Thanksgiving`, `Christmas`) as 0/1.
+- Sort the data chronologically by `Date`.
+- Perform a **time‑ordered holdout split** (≈70% train, 30% test) rather than a random split.
+- Drop the `Date` column before fitting.
 
-3. Random Forest Regressor
+**Metric**
 
-4. ARIMA/ExponentialSmooting/ARCH Models
+- Implement a custom weighted mean absolute error:
 
-**Metric:**
+  - Errors on holiday weeks are given weight 5, others weight 1.
+  - This mirrors the competition’s WMAE, where holiday periods are more important.
 
-The metric of the competition is weighted mean absolute error (WMAE). Weight of the error changes when it is holiday. It can be found in detail [here](https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/overview/evaluation).
+**Modeling**
 
-**_Understanding, Cleaning and Exploring Data:_** The first challange of this data is that there are too much seasonal effects on sales. Some departments have higher sales in some seasons but on average the best departments are different. To analyze these effects, data divided weeks of the year and also holiday dates categorized.
+- Use a `RandomForestRegressor` wrapped in a `make_pipeline(RobustScaler(), rf)` to handle scale differences across features.
+- Run several feature variants:
+  - Reduced feature set without individual holiday columns and without some macro features.
+  - Full encoded dataset.
+  - Full encoded dataset with feature selection driven by Random Forest feature importances.
 
-**_Preparing Data to Modeling:_** Boolean and string features encoded and whole columns encoded.
+**Results**
 
-**_Random Forest Regressor:_** Feature selection was done according to feature importance and as a best result 1801 error found.
+- WMAE on the holdout set for different configurations (approximate values from the notebook):
 
-**_ARIMA/ExponentialSmooting/ARCH Models:_** Second challange in this data is that it is not stationary. To make data more stationary taking difference,log and shift techniques applied. The least error was found with ExponentialSmooting as 821.
+  - Reduced feature set (no split holiday columns): ~5850
+  - Reduced set without `month`: ~5494
+  - Full encoded data: ~2450
+  - Full encoded data + feature selection: **~1801** (best Random Forest result)
+  - Full encoded + feature selection without `month`: ~2093
 
-**Findings:**
+- The notebook also reports `R²` scores for some runs (≈0.70–0.74), indicating that a substantial portion of variance is captured by the tree‑based model.
 
-- Although some departments has higher sales, on average others can be best. It shows us, some departments has effect on sales on some seasons like Thanksgiving.
-- It is same for stores, means that some areas has higher seasonal sales.
-- Stores has 3 types as A, B and C according to their sizes. Almost half of the stores are bigger than 150000 and categorized as A. According to type, sales of the stores are changing.
-- As expected, holiday average sales are higher than normal dates.
-- Top 4 sales belongs to Christmas, Thankgiving and Black Friday times. Interestingly, 22th week of the year is the 5th best sales. It is end of May and the time when schools are closed.
-- Christmas holiday introduces as the last days of the year. But people generally shop at 51th week. So, when we look at the total sales of holidays, Thankgiving has higher sales between them which was assigned by Walmart. But, when we look at the data we can understand it is not a good idea to assign Christmas sales in data to last days of the year. It must assign 51th week.
-- January sales are significantly less than other months. This is the result of November and December high sales. After two high sales month, people prefer to pay less on January.
-- CPI, temperature, unemployment rate and fuel price have no pattern on weekly sales.
+---
 
-More detailed finding can be found in notebooks with explorations.
+## Time‑Series Models (ARIMA and Exponential Smoothing)
 
-**Future Improvements:**
+Notebook: `STEP3_Modeling_ARIMA_and_ExponentialSmoothing.ipynb`
 
-- Data will be made more stationary with different techniques.
+**Aggregation and stationarity**
 
-- More detailed feature engineering and feature selection will be done.
+- Load `clean_data.csv`, drop `Unnamed: 0`, and convert `Date` to datetime.
+- Set `Date` as the index and resample to weekly frequencies:
 
-- More data can be found to observe holiday effects on sales and different holidays will be added like Easter, Halloween and Come Back to School times.
+  - `df_week = df.resample('W').mean()`
 
-- Markdown effects on model will be improved according to department sales.
+- Run stationarity checks (e.g., Augmented Dickey–Fuller) on `Weekly_Sales`.
+- Create transformed versions of the series (differenced, lagged, logged) and choose the differenced series for modeling due to non‑stationarity in the raw data.
 
-- Different models can be build for special stores or departments.
+**Train/test setup**
 
-- Market basket analysis can be done to find higher demand items of departments.
+- Chronological split on the weekly series:
 
-# Repository Guide
+  - Train: 100 weeks
+  - Test: 43 weeks
 
-**CSV Files:**
+**Models**
 
-The raw data files which obtained from Kaggle can be found ;
+1. **ARIMA (auto_ARIMA)**
+   - Use `auto_arima` on the differenced training series with a wide search space (`stepwise=False`, larger max p/q/P/Q).
+   - Selected ARIMA order in the notebook is `(0, 0, 5)` on the transformed series.
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/tree/master/Raw%20Data
+2. **Exponential Smoothing**
+   - Fit an `ExponentialSmoothing` model on the differenced training data with:
+     - `seasonal='additive'`
+     - `trend='additive'`
+     - `damped=True`
+     - `seasonal_periods=20`
+   - Generate forecasts over the test horizon and invert the differencing where needed to interpret results.
 
-The cleaned data can be found ;
+3. **ARCH/GARCH (exploratory)**
+   - Experiment with `arch_model` (TARCH/ZARCH variants).
+   - These models did not perform as well, and the notebook notes that they were not pursued further.
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/clean_data.csv
+**Evaluation**
 
-**Notebooks:**
+- Re‑use the weighted MAE function:
 
-Every step for data understanding, cleaning, exploring and feature engineering can be found in ;
+  - Apply holiday weights (5x for holiday weeks, 1x otherwise) when computing errors on the weekly test period.
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/STEP1_Cleaning_and_EDA.ipynb
+- Reported best WMAE:
 
-Metric and Random Forest Regressor with feature importance steps can be found in ;
+  - **≈821.33** for the Exponential Smoothing configuration on the test set.
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/STEP2_Random_Forest_Regressor.ipynb
+This significantly improves over the Random Forest benchmark WMAE and serves as the best model in the current notebook pipeline.
 
-Time Series models can be found in ;
+---
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/STEP3_Modeling_ARIMA_and_ExponentialSmoothing.ipynb
+## Repository Structure
 
-**Presentation:**
+- `Raw Data/` – Original Kaggle CSV files.
+- `clean_data.csv` – Preprocessed merged dataset.
+- `STEP1_Cleaning_and_EDA.ipynb` – Data cleaning, feature engineering, and EDA.
+- `STEP2_Random_Forest_Regressor.ipynb` – Feature encoding, Random Forest training, feature importance, and WMAE evaluation.
+- `STEP3_Modeling_ARIMA_and_ExponentialSmoothing.ipynb` – Weekly resampling, stationarity checks, ARIMA/ExponentialSmoothing/ARCH modeling, and final WMAE evaluation.
+- `Walmart Sales Forecast Presentation.pdf` – Slide deck summarizing setup, results, and business insights.
 
-Presentation can be found from here in .pdf format ;
+---
 
-https://github.com/yatharthMogra/Walmart-Sales-Forecasting/blob/master/Walmart%20Sales%20Forecast%20Presentation.pdf
+## Possible Extensions
 
-# Resources
+If extending this project further, next steps could include:
 
-For all details of the competition:
-
-https://www.kaggle.com/c/walmart-recruiting-store-sales-forecasting/overview
+- Adding lag and rolling‑window features explicitly to the time‑series models.
+- Evaluating gradient boosting or deep time‑series models on the same train/test splits.
+- Turning residuals from the forecasting models into anomaly scores for detecting unusual demand spikes/drops, analogous to an equipment‑failure early warning system.
